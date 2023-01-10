@@ -7,7 +7,6 @@
 1. [Развитие баз данных](./01_database_evolution.md)
 
 2. [Архитектура современной СУБД](./02_modern_dbms_architecture.md)
-)
 
 3. [Физическая модель базы данных](./03_physical-data-model.md)
 
