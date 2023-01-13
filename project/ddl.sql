@@ -88,9 +88,27 @@ create table section_parents
     constraint pk__section_parents primary key (service_id, section_code_id),
 
     constraint fk__section_parents__service_id__section_code_id
-        foreign key (service_id, section_code_id) references sections (service_id, code_id),
+        foreign key (service_id, section_code_id) references sections (service_id, code_id)
+            on delete cascade,
     constraint fk__section_parents__service_id__parent_code_id
         foreign key (service_id, parent_code_id) references sections (service_id, code_id)
+            on delete restrict
+);
+
+create table section_ancestors
+(
+    service_id       int not null,
+    section_code_id  int not null,
+    ancestor_code_id int not null,
+
+    constraint pk__section_ancestors primary key (service_id, section_code_id, ancestor_code_id),
+
+    constraint fk__section_ancestors__service_id__section_code_id
+        foreign key (service_id, section_code_id) references sections (service_id, code_id)
+            on delete cascade,
+    constraint fk__section_ancestors__service_id__ancestor_code_id
+        foreign key (service_id, ancestor_code_id) references sections (service_id, code_id)
+            on delete restrict
 );
 
 create table roles
@@ -111,3 +129,131 @@ create table roles
         foreign key (service_id, action_code) references actions (service_id, code),
     constraint fk__roles__granted_by foreign key (granted_by) references users (user_id)
 );
+
+-- constraint trigger для таблицы section_parents --
+
+create function fn__section_parents__cycle_check() returns trigger
+as
+$section_parents__update_validation$
+begin
+    if exists(select *
+              from section_ancestors
+              where service_id = new.service_id
+                and section_code_id = new.parent_code_id
+                and ancestor_code_id = new.section_code_id) then
+        raise exception 'Can not execute update - cycle detected';
+    end if;
+    return new;
+end;
+$section_parents__update_validation$ language plpgsql;
+
+create trigger tg__section_parents__cycle_check
+    before insert or update
+    on section_parents
+    for each row
+execute function fn__section_parents__cycle_check();
+
+
+-- функции и триггеры для таблицы section_parents, обновляющие section_ancestors --
+
+create procedure fn__section_ancestors__add_edge(
+    section_parent_record record
+) as
+$section_ancestors__add_edge$
+begin
+    with new_ancestors as (select ancestor_code_id
+                           from section_ancestors
+                           where service_id = section_parent_record.service_id
+                             and section_code_id = section_parent_record.parent_code_id
+                           union
+                           select section_parent_record.parent_code_id as ancestor_code_id),
+         subtree as (select service_id, section_code_id
+                     from section_ancestors
+                     where service_id = section_parent_record.service_id
+                       and ancestor_code_id = section_parent_record.section_code_id
+                     union
+                     select section_parent_record.service_id      as service_id,
+                            section_parent_record.section_code_id as section_code_id)
+    insert
+    into section_ancestors(service_id, section_code_id, ancestor_code_id)
+    select service_id, section_code_id, ancestor_code_id
+    from subtree
+             cross join new_ancestors;
+    return;
+end;
+$section_ancestors__add_edge$ language plpgsql;
+
+create procedure fn__section_ancestors__delete_edge(
+    section_parent_record record
+) as
+$section_ancestors__remove_edge$
+begin
+    with old_ancestors as (select ancestor_code_id
+                           from section_ancestors
+                           where service_id = section_parent_record.service_id
+                             and section_code_id = section_parent_record.section_code_id),
+         subtree as (select service_id, section_code_id
+                     from section_ancestors
+                     where service_id = section_parent_record.service_id
+                       and ancestor_code_id = section_parent_record.section_code_id
+                     union
+                     select section_parent_record.service_id      as service_id,
+                            section_parent_record.section_code_id as section_code_id)
+    delete
+    from section_ancestors
+        using section_ancestors parent_ancestors
+    where section_ancestors.ancestor_code_id in
+          (select ancestor_code_id from old_ancestors)
+      and (section_ancestors.service_id, section_ancestors.section_code_id) in
+          (select service_id, section_code_id from subtree);
+    return;
+end;
+$section_ancestors__remove_edge$ language plpgsql;
+
+
+create function fn__section_parents__insert__ancestors() returns trigger
+as
+$section_parents__insert$
+begin
+    call fn__section_ancestors__add_edge(new);
+    return null;
+end;
+$section_parents__insert$ language plpgsql;
+
+create function fn__section_parents__delete__ancestors() returns trigger
+as
+$section_parents__delete$
+begin
+    call fn__section_ancestors__delete_edge(old);
+    return null;
+end;
+$section_parents__delete$ language plpgsql;
+
+create function fn__section_parents__update__ancestors() returns trigger
+as
+$section_parents__update$
+begin
+    call fn__section_ancestors__delete_edge(old);
+    call fn__section_ancestors__add_edge(new);
+    return null;
+end;
+$section_parents__update$ language plpgsql;
+
+
+create trigger tg__section_parents__insert__ancestors
+    after insert
+    on section_parents
+    for each row
+execute function fn__section_parents__insert__ancestors();
+
+create trigger tg__section_parents__delete__ancestors
+    after delete
+    on section_parents
+    for each row
+execute function fn__section_parents__delete__ancestors();
+
+create trigger tg__section_parents__update__ancestors
+    after update
+    on section_parents
+    for each row
+execute function fn__section_parents__update__ancestors();
