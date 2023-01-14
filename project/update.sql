@@ -1,3 +1,4 @@
+-- read committed --
 create procedure fn__check_owner_access(
     actor_login varchar(32),
     service_code varchar(32)
@@ -17,6 +18,7 @@ end;
 $has_owner_access$ language plpgsql;
 
 
+-- read committed --
 create procedure fn__grant_role(
     actor_login varchar(32),
     team_code varchar(32),
@@ -47,7 +49,7 @@ begin
 end;
 $grant_role$ language plpgsql;
 
-
+-- read committed --
 create procedure fn__extend_role(
     actor_login varchar(32),
     team_code varchar(32),
@@ -89,6 +91,7 @@ end;
 $extend_role$ language plpgsql;
 
 
+-- read committed --
 create procedure fn__revoke_role(
     actor_login varchar(32),
     team_code varchar(32),
@@ -122,6 +125,7 @@ end;
 $revoke_role$ language plpgsql;
 
 
+-- read committed --
 create procedure fn__change_service_owner(
     actor_login varchar(32),
     team_code varchar(32),

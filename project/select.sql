@@ -84,7 +84,8 @@ where services.code = :service_code;
 -- Вывести, какие роли истекают в ближайшие 24 часа
 select distinct team_code, service_code, action_code, section_code
 from team_service_actions
-where team_service_actions.expiration_ts < (now() at time zone 'UTC' + interval '1' day);
+where team_service_actions.expiration_ts is not null
+  and team_service_actions.expiration_ts < (now() at time zone 'UTC' + interval '1' day);
 
 
 -- 5. most_granting_users

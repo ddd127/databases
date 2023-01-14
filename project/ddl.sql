@@ -106,7 +106,7 @@ create table section_root_paths
     constraint fk__section_root_path__service_id__section_code_id
         foreign key (service_id, section_code_id) references sections (service_id, code_id)
             on delete cascade,
-    constraint fk__section_root_path__service_id__ancestor_code_id
+    constraint fk__section_root_path__service_id__path_item_code_id
         foreign key (service_id, path_item_code_id) references sections (service_id, code_id)
             on delete restrict
 );
@@ -208,7 +208,7 @@ create trigger tg__section_parents__cycle_check
 execute function fn__section_parents__cycle_check();
 
 
--- функции и триггеры, обновляющие section_ancestors --
+-- функции и триггеры, обновляющие section_root_paths --
 
 create function fn__sections__new_section() returns trigger
 as
@@ -227,12 +227,13 @@ create trigger tg__sections__new_section
 execute function fn__sections__new_section();
 
 
-create procedure fn__section_ancestors__add_edge(
+-- read committed --
+create procedure fn__section_root_paths__add_edge(
     section_parent_record record
 ) as
-$section_ancestors__add_edge$
+$section_root_paths__add_edge$
 begin
-    with new_ancestors as (select path_item_code_id
+    with new_root_paths as (select path_item_code_id
                            from section_root_paths
                            where service_id = section_parent_record.service_id
                              and section_code_id = section_parent_record.parent_code_id),
@@ -244,17 +245,18 @@ begin
     into section_root_paths(service_id, section_code_id, path_item_code_id)
     select service_id, section_code_id, path_item_code_id
     from subtree
-             cross join new_ancestors;
+             cross join new_root_paths;
     return;
 end;
-$section_ancestors__add_edge$ language plpgsql;
+$section_root_paths__add_edge$ language plpgsql;
 
-create procedure fn__section_ancestors__delete_edge(
+-- read committed --
+create procedure fn__section_root_paths__delete_edge(
     section_parent_record record
 ) as
-$section_ancestors__remove_edge$
+$section_root_paths__remove_edge$
 begin
-    with old_ancestors as (select path_item_code_id
+    with old_root_paths as (select path_item_code_id
                            from section_root_paths
                            where service_id = section_parent_record.service_id
                              and section_code_id = section_parent_record.section_code_id
@@ -266,57 +268,60 @@ begin
     delete
     from section_root_paths
     where section_root_paths.path_item_code_id in
-          (select path_item_code_id from old_ancestors)
+          (select path_item_code_id from old_root_paths)
       and (section_root_paths.service_id, section_root_paths.section_code_id) in
           (select service_id, section_code_id from subtree);
     return;
 end;
-$section_ancestors__remove_edge$ language plpgsql;
+$section_root_paths__remove_edge$ language plpgsql;
 
 
-create function fn__section_parents__insert__ancestors() returns trigger
+-- read committed --
+create function fn__section_parents__insert__root_paths() returns trigger
 as
 $section_parents__insert$
 begin
-    call fn__section_ancestors__add_edge(new);
+    call fn__section_root_paths__add_edge(new);
     return null;
 end;
 $section_parents__insert$ language plpgsql;
 
-create function fn__section_parents__delete__ancestors() returns trigger
+-- read committed --
+create function fn__section_parents__delete__root_paths() returns trigger
 as
 $section_parents__delete$
 begin
-    call fn__section_ancestors__delete_edge(old);
+    call fn__section_root_paths__delete_edge(old);
     return null;
 end;
 $section_parents__delete$ language plpgsql;
 
-create function fn__section_parents__update__ancestors() returns trigger
+-- read committed --
+create function fn__section_parents__update__root_paths() returns trigger
 as
 $section_parents__update$
 begin
-    call fn__section_ancestors__delete_edge(old);
-    call fn__section_ancestors__add_edge(new);
+    call fn__section_root_paths__delete_edge(old);
+    call fn__section_root_paths__add_edge(new);
     return null;
 end;
 $section_parents__update$ language plpgsql;
 
 
-create trigger tg__section_parents__insert__ancestors
+create trigger tg__section_parents__insert__root_paths
     after insert
     on section_parents
     for each row
-execute function fn__section_parents__insert__ancestors();
+execute function fn__section_parents__insert__root_paths();
 
-create trigger tg__section_parents__delete__ancestors
+create trigger tg__section_parents__delete__root_paths
     after delete
     on section_parents
     for each row
-execute function fn__section_parents__delete__ancestors();
+execute function fn__section_parents__delete__root_paths();
 
-create trigger tg__section_parents__update__ancestors
+create trigger tg__section_parents__update__root_paths
     after update
     on section_parents
     for each row
-execute function fn__section_parents__update__ancestors();
+execute function fn__section_parents__update__root_paths();
