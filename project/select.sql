@@ -8,7 +8,7 @@ as
 select services.service_id                  as service_id,
        services.code                        as service_code,
        section_root_paths.section_code_id   as section_code_id,
-       section_codes.code_id                as section_code,
+       section_codes.code                   as section_code,
        section_root_paths.path_item_code_id as path_item_code_id
 from section_root_paths
          inner join section_codes on section_root_paths.section_code_id = section_codes.code_id
@@ -41,7 +41,7 @@ from teams
          inner join actions on roles.action_code = actions.code and services.service_id = actions.service_id
          inner join sections on roles.section_code_id = sections.code_id and services.service_id = sections.service_id
          inner join section_codes on sections.code_id = section_codes.code_id
-where roles.expiration_ts > now() at time zone 'UTC';
+where (roles.expiration_ts is null or roles.expiration_ts > now() at time zone 'UTC');
 
 
 -- 1. user_has_role_exact
@@ -65,7 +65,7 @@ select exists(select 1
               where login = :login
                 and service_code = :service_code
                 and section_code_id in (select path_item_code_id
-                                        from section_root_paths
+                                        from full_section_path
                                         where service_code = :service_code
                                           and section_code = :section_code)
                 and action_code = :action_code);
@@ -76,7 +76,8 @@ select exists(select 1
 select users.login, users.name, users.surname
 from services
          inner join team_members on services.owner_id = team_members.team_id
-         inner join users on team_members.user_id = users.user_id;
+         inner join users on team_members.user_id = users.user_id
+where services.code = :service_code;
 
 
 -- 4. roles_expiring_tomorrow
@@ -90,7 +91,7 @@ where team_service_actions.expiration_ts < (now() at time zone 'UTC' + interval 
 -- Вывести :limit пользователей, которые выдали больше всего ролей
 select users.login, users.name, users.surname, roles_granted
 from users
-         inner join (select granted_by, count() as roles_granted
+         inner join (select granted_by, count(*) as roles_granted
                      from team_service_actions
                      group by granted_by
                      order by roles_granted desc
@@ -99,11 +100,15 @@ from users
 
 -- 6. minimal_required_section
 -- Вывести по двум заданным секциям минимальную, на которую можно выдать роль,
--- чтобы она проросла в обе заданные секции (если такая есть)
-with common_path as (select path_item_code_id
-                     from full_section_path
-                     where service_code = :service_code
-                       and (section_code = :first_section or section_code = :second_section)),
+-- чтобы она проросла в обе заданные секции (если такая есть). Иначе - пустой ответ (не null).
+with common_path as (select first_path.path_item_code_id
+                     from full_section_path first_path
+                              inner join full_section_path second_path
+                                         on first_path.service_id = second_path.service_id
+                                             and first_path.path_item_code_id = second_path.path_item_code_id
+                     where first_path.service_code = :service_code
+                       and first_path.section_code = :first_section
+                       and second_path.section_code = :second_section),
      common_path_parents as (select parent_code_id
                              from section_parents
                                       inner join services on section_parents.service_id = services.service_id
@@ -112,9 +117,48 @@ with common_path as (select path_item_code_id
                                                                        from common_path)),
      minimal_section as (select path_item_code_id
                          from common_path
-                         where path_item_code_id not in (select parent_code_id
-                                                         from common_path_parents))
-select *
+                                  left join common_path_parents
+                                            on common_path.path_item_code_id = common_path_parents.parent_code_id
+                         where common_path_parents.parent_code_id is null)
+select services.code, section_codes.code
 from sections
          inner join services on sections.service_id = services.service_id
-where sections.code_id in (select path_item_code_id from minimal_section);
+         inner join section_codes on sections.code_id = section_codes.code_id
+where sections.code_id in (select path_item_code_id
+                           from minimal_section);
+
+
+-- 7. useless_actions
+-- Вывести действия, на которые никогда не выдавалась никакая роль
+select services.code, actions.code
+from actions
+         inner join services
+                    on actions.service_id = services.service_id
+         left join roles
+                   on actions.service_id = roles.service_id and actions.code = roles.action_code
+where roles.service_id is null;
+
+
+-- 8. service_granted_actions_count
+-- Количество используемых действий в сервисе
+select services.code, count(distinct actions.code)
+from services
+         inner join actions
+                    on services.service_id = actions.service_id
+         inner join roles
+                    on actions.service_id = roles.service_id and actions.code = roles.action_code
+group by services.code;
+
+
+-- 9. average_user_roles_by_team
+-- Среднее количество ролей у пользователя по командам
+-- (оно не равно числу ролей у команды, тк. пользователь может быть в нескольких)
+select teams.code, avg(roles)
+from teams
+         inner join team_members on teams.team_id = team_members.team_id
+         inner join (select team_members.user_id, count(*) as roles
+                     from team_members
+                              inner join team_service_actions on team_members.team_id = team_service_actions.team_id
+                     group by team_members.user_id) user_role_count
+                    on team_members.user_id = user_role_count.user_id
+group by teams.code;

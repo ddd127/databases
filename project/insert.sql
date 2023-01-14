@@ -46,8 +46,8 @@ values (1, 1),
 -- Интерфейсным ключом называется множество текстов, состоящее из оригинального текста и переводов
 -- Например, всевозможные переводы кнопки "Купить" - это один интерфейсный ключ
 insert into services(service_id, code, name, owner_id)
-values (1, 'translation_memory', 'Память переводов', 4),
-       (2, 'interface_keys', 'Интерфейсные ключи', 3);
+values (1, 'translation_memory', 'Память переводов', 1),
+       (2, 'interface_keys', 'Интерфейсные ключи', 4);
 
 insert into actions(service_id, code, name)
 values (1, 'read', 'Просмотреть память переводов'),
@@ -55,7 +55,8 @@ values (1, 'read', 'Просмотреть память переводов'),
 
        (2, 'change_source', 'Поменять исходный текст'),
        (2, 'change_target', 'Поменять текст перевода'),
-       (2, 'download_keys', 'Выгрузить ключи');
+       (2, 'download_keys', 'Выгрузить ключи'),
+       (2, 'useless_action', 'Просто для примера');
 
 insert into section_codes(code_id, code)
 values (1, 'common'),
