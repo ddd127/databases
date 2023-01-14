@@ -141,7 +141,7 @@ begin
               where service_id = new.service_id
                 and section_code_id = new.parent_code_id
                 and path_item_code_id = new.section_code_id) then
-        raise exception 'Can not execute update - cycle detected';
+        raise 'Can not execute update - cycle detected';
     end if;
     return new;
 end;
