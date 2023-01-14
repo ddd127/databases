@@ -3,8 +3,6 @@ create procedure fn__check_owner_access(
     service_code varchar(32)
 ) as
 $has_owner_access$
-declare
-    service_code varchar(32);
 begin
     if not exists(select 1
                   from services
@@ -32,16 +30,18 @@ begin
     call fn__check_owner_access(actor_login, service_code);
 
     insert into roles(team_id, service_id, section_code_id, action_code, granted_by, expiration_ts)
-    select 0, services.service_id, section_codes.code_id, actions.code, actor_login, expiration_ts
+    select teams.team_id, services.service_id, section_codes.code_id, actions.code, users.user_id, expiration_ts
     from services
              inner join actions on services.service_id = actions.service_id
              inner join sections on services.service_id = sections.service_id
              inner join section_codes on sections.code_id = section_codes.code_id
              cross join teams
+             cross join users
     where services.code = service_code
       and actions.code = action_code
       and section_codes.code = section_code
-      and teams.code = team_code;
+      and teams.code = team_code
+      and users.login = actor_login;
 
     return;
 end;
@@ -61,12 +61,14 @@ begin
     call fn__check_owner_access(actor_login, service_code);
 
     update roles
-    set expiration_ts = expiration_ts_arg
+    set expiration_ts = expiration_ts_arg,
+        granted_by    = users.user_id
     from teams,
          services,
          actions,
          sections,
-         section_codes
+         section_codes,
+         users
     where roles.team_id = teams.team_id
       and roles.service_id = services.service_id
       and roles.action_code = actions.code
@@ -79,7 +81,8 @@ begin
       and teams.code = team_code
       and services.code = service_code
       and actions.code = action_code_arg
-      and section_codes.code = section_code;
+      and section_codes.code = section_code
+      and users.login = actor_login;
 
     return;
 end;
@@ -137,3 +140,6 @@ begin
     return;
 end;
 $change_service_owner$ language plpgsql;
+
+
+
