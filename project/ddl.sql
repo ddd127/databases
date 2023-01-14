@@ -130,6 +130,60 @@ create table roles
     constraint fk__roles__granted_by foreign key (granted_by) references users (user_id)
 );
 
+
+-- indices --
+-- отмечу, что индексы на primary и unique postgres создает сам,
+-- поэтому явных индексов на них я не делал.
+
+-- Btree иногда выбирал там, где более одного параметра,
+-- чтобы при запросе по префиксу параметров индекс тоже работал.
+
+-- foreign key indices
+
+create index ix__team_members__user_id on team_members using hash (user_id);
+create index ix__team_members__team_id on team_members using hash (team_id);
+
+create index ix__services__owner_id on services using hash (owner_id);
+
+create index ix__actions__actions_id on actions using hash (service_id);
+create index ix__actions__service_id on sections using hash (service_id);
+
+create index ix__section_parents__service_id__parent_code_id
+    on section_parents using btree (service_id, parent_code_id);
+
+create index ix__section_root_paths__service_id__section_code_id
+    on section_root_paths using btree (service_id, section_code_id);
+create index ix__section_root_paths__service_id__path_item_code_id
+    on section_root_paths using btree (service_id, path_item_code_id);
+
+create index ix__roles__team_id on roles using hash (team_id);
+create index ix__roles__service_id__section_code_id on roles using btree (service_id, section_code_id);
+create index ix__roles__service_id__action_code on roles using btree (service_id, action_code);
+create index ix__roles__granted_by on roles using hash (granted_by);
+
+-- индексы для запросов
+-- индекс на expiration_ts using btree
+-- нужен для team_service_actions view,
+-- поскольку там происходит фильтрация по expiration_ts > now()
+-- primary key в индекс добавлен для того,
+-- чтобы запросы user_has_role_exact и user_has_role_at_least работали быстрее
+-- (по идее, это самые горячие запросы в системе, поэтому для них точно надо).
+create index ix__roles__expiration_ts__and_others
+    on roles using btree (expiration_ts, service_id, team_id, action_code, section_code_id) include (granted_by);
+
+-- покрывающие индексы для join-ов (primary key и так будет btree в обратную сторону)
+-- индексов получилось довольно много, но за счет такого их количества,
+-- team_service_actions view вообще не должно заходить в таблицы,
+-- поскольку все значения полей можно получить из join индексов
+-- и ix__roles__expiration_ts__and_others
+create index ix__team_members__team_id__user_id on team_members using btree (user_id, team_id);
+create index ix__service__code__service_id on services using btree (code, service_id);
+create index ix__section_codes__code__code_id on section_codes using btree (code, code_id);
+create index ix__sections__code_id__service_id on sections using btree (code_id, service_id);
+create index ix__actions__code__service_id on actions using btree (code, service_id);
+create index ix__teams__code__team_id on teams using btree (code, team_id);
+
+
 -- constraint trigger для таблицы section_parents --
 
 create function fn__section_parents__cycle_check() returns trigger
