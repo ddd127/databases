@@ -140,6 +140,3 @@ begin
     return;
 end;
 $change_service_owner$ language plpgsql;
-
-
-
