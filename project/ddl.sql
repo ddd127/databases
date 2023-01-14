@@ -95,19 +95,19 @@ create table section_parents
             on delete restrict
 );
 
-create table section_ancestors
+create table section_root_paths
 (
-    service_id       int not null,
-    section_code_id  int not null,
-    ancestor_code_id int not null,
+    service_id        int not null,
+    section_code_id   int not null,
+    path_item_code_id int not null,
 
-    constraint pk__section_ancestors primary key (service_id, section_code_id, ancestor_code_id),
+    constraint pk__section_root_path primary key (service_id, section_code_id, path_item_code_id),
 
-    constraint fk__section_ancestors__service_id__section_code_id
+    constraint fk__section_root_path__service_id__section_code_id
         foreign key (service_id, section_code_id) references sections (service_id, code_id)
             on delete cascade,
-    constraint fk__section_ancestors__service_id__ancestor_code_id
-        foreign key (service_id, ancestor_code_id) references sections (service_id, code_id)
+    constraint fk__section_root_path__service_id__ancestor_code_id
+        foreign key (service_id, path_item_code_id) references sections (service_id, code_id)
             on delete restrict
 );
 
@@ -137,10 +137,10 @@ as
 $section_parents__update_validation$
 begin
     if exists(select *
-              from section_ancestors
+              from section_root_paths
               where service_id = new.service_id
                 and section_code_id = new.parent_code_id
-                and ancestor_code_id = new.section_code_id) then
+                and path_item_code_id = new.section_code_id) then
         raise exception 'Can not execute update - cycle detected';
     end if;
     return new;
@@ -154,29 +154,41 @@ create trigger tg__section_parents__cycle_check
 execute function fn__section_parents__cycle_check();
 
 
--- функции и триггеры для таблицы section_parents, обновляющие section_ancestors --
+-- функции и триггеры, обновляющие section_ancestors --
+
+create function fn__sections__new_section() returns trigger
+as
+$sections__new_section$
+begin
+    insert into section_root_paths (service_id, section_code_id, path_item_code_id)
+    values (new.service_id, new.code_id, new.code_id);
+    return null;
+end;
+$sections__new_section$ language plpgsql;
+
+create trigger tg__sections__new_section
+    after insert or update
+    on sections
+    for each row
+execute function fn__sections__new_section();
+
 
 create procedure fn__section_ancestors__add_edge(
     section_parent_record record
 ) as
 $section_ancestors__add_edge$
 begin
-    with new_ancestors as (select ancestor_code_id
-                           from section_ancestors
+    with new_ancestors as (select path_item_code_id
+                           from section_root_paths
                            where service_id = section_parent_record.service_id
-                             and section_code_id = section_parent_record.parent_code_id
-                           union
-                           select section_parent_record.parent_code_id as ancestor_code_id),
+                             and section_code_id = section_parent_record.parent_code_id),
          subtree as (select service_id, section_code_id
-                     from section_ancestors
+                     from section_root_paths
                      where service_id = section_parent_record.service_id
-                       and ancestor_code_id = section_parent_record.section_code_id
-                     union
-                     select section_parent_record.service_id      as service_id,
-                            section_parent_record.section_code_id as section_code_id)
+                       and path_item_code_id = section_parent_record.section_code_id)
     insert
-    into section_ancestors(service_id, section_code_id, ancestor_code_id)
-    select service_id, section_code_id, ancestor_code_id
+    into section_root_paths(service_id, section_code_id, path_item_code_id)
+    select service_id, section_code_id, path_item_code_id
     from subtree
              cross join new_ancestors;
     return;
@@ -188,23 +200,20 @@ create procedure fn__section_ancestors__delete_edge(
 ) as
 $section_ancestors__remove_edge$
 begin
-    with old_ancestors as (select ancestor_code_id
-                           from section_ancestors
+    with old_ancestors as (select path_item_code_id
+                           from section_root_paths
                            where service_id = section_parent_record.service_id
-                             and section_code_id = section_parent_record.section_code_id),
+                             and section_code_id = section_parent_record.section_code_id
+                             and path_item_code_id != section_parent_record.section_code_id),
          subtree as (select service_id, section_code_id
-                     from section_ancestors
+                     from section_root_paths
                      where service_id = section_parent_record.service_id
-                       and ancestor_code_id = section_parent_record.section_code_id
-                     union
-                     select section_parent_record.service_id      as service_id,
-                            section_parent_record.section_code_id as section_code_id)
+                       and path_item_code_id = section_parent_record.section_code_id)
     delete
-    from section_ancestors
-        using section_ancestors parent_ancestors
-    where section_ancestors.ancestor_code_id in
-          (select ancestor_code_id from old_ancestors)
-      and (section_ancestors.service_id, section_ancestors.section_code_id) in
+    from section_root_paths
+    where section_root_paths.path_item_code_id in
+          (select path_item_code_id from old_ancestors)
+      and (section_root_paths.service_id, section_root_paths.section_code_id) in
           (select service_id, section_code_id from subtree);
     return;
 end;
